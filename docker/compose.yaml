@@ -1,0 +1,96 @@
+# The whole shop on one machine. Only nginx is published. Each unit's secrets stay in that unit's
+# gitignored .env files, and this file overrides the settings that differ in a container. Each
+# backend has its own network, so only its own FES can reach it.
+name: shop
+
+services:
+  nginx:
+    image: nginx:1.30.6-alpine
+    restart: unless-stopped
+    depends_on: [shop-router]
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/shop.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks: [edge]
+
+  shop-router:
+    image: shop-router:${IMAGE_TAG:-latest}
+    hostname: docker-shop-router
+    restart: unless-stopped
+    environment:
+      PORT: '3000'
+      SHELL_URL: http://shell-fes:3001
+      # Point one at another build to swap that MFE without touching the Shell.
+      MFE_CATALOG_URL: ${MFE_CATALOG_URL:-http://catalog-fes:3002}
+      MFE_CART_URL: ${MFE_CART_URL:-http://cart-fes:3003}
+    networks: [edge, units]
+
+  shell-fes:
+    image: shop-shell-fes:${IMAGE_TAG:-latest}
+    hostname: docker-shell-fes
+    restart: unless-stopped
+    env_file: ../../shop-shell/fes/.env
+    environment:
+      PORT: '3001'
+      BACKEND_URL: http://shell-backend:4001
+      CLIENT_DIST: /app/client-dist
+    networks: [units, shell]
+
+  shell-backend:
+    image: shop-shell-backend:${IMAGE_TAG:-latest}
+    hostname: docker-shell-backend
+    restart: unless-stopped
+    env_file: ../../shop-shell/mock-backend/.env
+    environment:
+      PORT: '4001'
+    networks: [shell]
+
+  catalog-fes:
+    image: shop-catalog-fes:${IMAGE_TAG:-latest}
+    hostname: docker-catalog-fes
+    restart: unless-stopped
+    env_file: ../../shop-catalog/fes/.env
+    environment:
+      PORT: '3002'
+      BACKEND_URL: http://catalog-backend:4002
+      CLIENT_DIST: /app/client-dist
+    networks: [units, catalog]
+
+  catalog-backend:
+    image: shop-catalog-backend:${IMAGE_TAG:-latest}
+    hostname: docker-catalog-backend
+    restart: unless-stopped
+    env_file: ../../shop-catalog/mock-backend/.env
+    environment:
+      PORT: '4002'
+    networks: [catalog]
+
+  cart-fes:
+    image: shop-cart-fes:${IMAGE_TAG:-latest}
+    hostname: docker-cart-fes
+    restart: unless-stopped
+    env_file: ../../shop-cart/fes/.env
+    environment:
+      PORT: '3003'
+      BACKEND_URL: http://cart-backend:4003
+      CLIENT_DIST: /app/client-dist
+    networks: [units, cart]
+
+  cart-backend:
+    image: shop-cart-backend:${IMAGE_TAG:-latest}
+    hostname: docker-cart-backend
+    restart: unless-stopped
+    env_file: ../../shop-cart/mock-backend/.env
+    environment:
+      PORT: '4003'
+    networks: [cart]
+
+networks:
+  edge:
+  units:
+  shell:
+  catalog:
+  cart:

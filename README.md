@@ -13,7 +13,7 @@ Only nginx is published. Each backend has its own network, so only its own FES c
 ## Run
 
 Check out `shop-router`, `shop-shell`, `shop-catalog` and `shop-cart` next to this repository, and
-copy each unit's `.env.example` files to `.env`.
+copy each repository's `.env.example` files to `.env`.
 
 ```sh
 cp docker/.env.example docker/.env

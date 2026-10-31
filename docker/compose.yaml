@@ -20,6 +20,7 @@ services:
     image: shop-router:${IMAGE_TAG:-latest}
     hostname: docker-shop-router
     restart: unless-stopped
+    env_file: ../../shop-router/.env
     environment:
       PORT: '3000'
       SHELL_URL: http://shell-fes:3001

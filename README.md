@@ -42,6 +42,23 @@ docker compose -f docker/compose.yaml restart nginx
 
 ## Check
 
+Check every unit from the terminal, through the public origin:
+
+```sh
+export PUBLIC_ORIGIN=https://shop.test
+curl -k "$PUBLIC_ORIGIN/health/units"
+curl -k "$PUBLIC_ORIGIN/version/units"
+curl -kfsS "$PUBLIC_ORIGIN/health/units/catalog"    # fails on a 503
+curl -kfsS "$PUBLIC_ORIGIN/version/units/catalog"
+```
+
+`-k` accepts the self-signed certificate; drop it with `mkcert`. Backends stay private: a backend that
+is down shows in its FES's readiness. To check one directly, run curl on its network:
+
+```sh
+docker run --rm --network shop_catalog curlimages/curl -fsS http://catalog-backend:4002/health/ready
+```
+
 Run the end-to-end tests from `shop-shell` through the running stack:
 
 ```sh

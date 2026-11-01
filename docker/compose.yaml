@@ -3,11 +3,30 @@
 # backend has its own network, so only its own FES can reach it.
 name: shop
 
+# Liveness only: readiness depends on a unit's backend, and a backend that is down must not take that
+# unit's files and problem+json errors away with it. A 404 is alive too: the router's health endpoints
+# can be turned off.
+x-pod: &pod
+  # A server drains for up to 8 s when stopped, so it must get longer than that.
+  stop_grace_period: 10s
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - "fetch(`http://localhost:$${process.env.PORT}/health/live`).then((r) => process.exit(r.status < 500 ? 0 : 1), () => process.exit(1))"
+    interval: 5s
+    timeout: 3s
+    retries: 3
+    start_period: 10s
+
 services:
   nginx:
     image: nginx:1.30.6-alpine
     restart: unless-stopped
-    depends_on: [shop-router]
+    depends_on:
+      shop-router:
+        condition: service_healthy
     ports:
       - '80:80'
       - '443:443'
@@ -17,6 +36,9 @@ services:
     networks: [edge]
 
   shop-router:
+    <<: *pod
+    deploy:
+      replicas: ${ROUTER_PODS:-1}
     image: shop-router:${IMAGE_TAG:-latest}
     hostname: docker-shop-router
     restart: unless-stopped
@@ -30,6 +52,9 @@ services:
     networks: [edge, units]
 
   shell-fes:
+    <<: *pod
+    deploy:
+      replicas: ${SHELL_PODS:-1}
     image: shop-shell-fes:${IMAGE_TAG:-latest}
     hostname: docker-shell-fes
     restart: unless-stopped
@@ -41,6 +66,9 @@ services:
     networks: [units, shell]
 
   shell-backend:
+    <<: *pod
+    deploy:
+      replicas: ${SHELL_PODS:-1}
     image: shop-shell-backend:${IMAGE_TAG:-latest}
     hostname: docker-shell-backend
     restart: unless-stopped
@@ -50,6 +78,9 @@ services:
     networks: [shell]
 
   catalog-fes:
+    <<: *pod
+    deploy:
+      replicas: ${CATALOG_PODS:-1}
     image: shop-catalog-fes:${IMAGE_TAG:-latest}
     hostname: docker-catalog-fes
     restart: unless-stopped
@@ -61,6 +92,9 @@ services:
     networks: [units, catalog]
 
   catalog-backend:
+    <<: *pod
+    deploy:
+      replicas: ${CATALOG_PODS:-1}
     image: shop-catalog-backend:${IMAGE_TAG:-latest}
     hostname: docker-catalog-backend
     restart: unless-stopped
@@ -70,6 +104,9 @@ services:
     networks: [catalog]
 
   cart-fes:
+    <<: *pod
+    deploy:
+      replicas: ${CART_PODS:-1}
     image: shop-cart-fes:${IMAGE_TAG:-latest}
     hostname: docker-cart-fes
     restart: unless-stopped
@@ -81,6 +118,9 @@ services:
     networks: [units, cart]
 
   cart-backend:
+    <<: *pod
+    deploy:
+      replicas: ${CART_PODS:-1}
     image: shop-cart-backend:${IMAGE_TAG:-latest}
     hostname: docker-cart-backend
     restart: unless-stopped

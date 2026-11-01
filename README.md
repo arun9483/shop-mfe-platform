@@ -29,16 +29,39 @@ makes a self-signed one, which the browser warns about.
 ## Change the domain
 
 Change `PUBLIC_ORIGIN` in `docker/.env`, then run `docker/build.sh` again, because source maps are
-tied to that URL. Update `/etc/hosts` to match and restart nginx. Nothing else names the domain.
+tied to that URL. Update `/etc/hosts` to match. Nothing else names the domain.
 
 ## Swap an MFE
 
-Set `MFE_CATALOG_URL` or `MFE_CART_URL`, recreate `shop-router` and restart nginx:
+Set `MFE_CATALOG_URL` or `MFE_CART_URL` and recreate `shop-router`:
 
 ```sh
 MFE_CATALOG_URL=http://other-build:3002 docker compose -f docker/compose.yaml up -d shop-router
-docker compose -f docker/compose.yaml restart nginx
 ```
+
+## Scale
+
+Every unit runs one pod by default. Set `ROUTER_PODS`, `SHELL_PODS`, `CATALOG_PODS` or `CART_PODS` in
+`docker/.env`, where a unit's number covers its FES and its mock backend, then run
+`docker compose -f docker/compose.yaml up -d --wait`.
+
+- No unit holds session state, so no request needs to return to the same pod.
+- nginx spreads requests across the router pods, and the router opens a new connection per request, so
+  each one can reach any pod of a unit.
+- A stopped server finishes its requests in flight, for up to 8 s, then exits.
+- Docker's health checks use `/health/live`, never `/health/ready`: a backend that is down must not take
+  its unit's files and `problem+json` errors away with it.
+- nginx is the one piece that stays a single container. Production uses a managed CDN or load balancer.
+
+## Deploy a unit
+
+```sh
+docker/deploy.sh catalog-fes
+```
+
+This replaces all of a service's pods at once, so old and new pods never run together: a new `entry.js`
+can never ask an old pod for a chunk it does not have. The unit is unavailable for a few seconds, and
+its Shell fallback shows.
 
 ## Check
 

@@ -53,7 +53,7 @@ x-importer: &importer
   networks: [idp]
 
 # What a server needs to reach the IdP: the issuer tokens carry, and Keycloak inside Docker.
-x-sign-in: &sign-in
+x-login: &login
   AUTH_ENABLED: 'true'
   OIDC_ISSUER_URL: https://shop.test:8443/realms/shop
   OIDC_INTERNAL_URL: http://keycloak:8080/realms/shop
@@ -72,15 +72,15 @@ services:
 
   shop-router:
     networks: [edge, units, idp]
-  # Sign-in on for the Shell (MVP-2 phase 2). Each server's client ID and secret stay in its own .env.
+  # Login on for the Shell (MVP-2 phase 2). Each server's client ID and secret stay in its own .env.
   shell-fes:
     networks: [units, shell, idp]
     environment:
-      <<: *sign-in
+      <<: *login
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://shop.test}
   shell-backend:
     networks: [shell, idp]
-    environment: *sign-in
+    environment: *login
   catalog-fes:
     networks: [units, catalog, idp]
   catalog-backend:

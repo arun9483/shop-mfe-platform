@@ -95,7 +95,7 @@ without `E2E_BASE_URL` for those. Docker data appears in New Relic under the app
 ## Single sign-on (MVP-2)
 
 `docker/compose.sso.yaml` adds the shop's identity provider, Keycloak, on top of the stack, as
-[MVP-2](https://github.com/arun9483/arun-mfe-platform/blob/main/docs/mvp-2-sso.md) describes, and turns sign-in
+[MVP-2](https://github.com/arun9483/arun-mfe-platform/blob/main/docs/mvp-2-sso.md) describes, and turns login
 on for the units that support it. Without it the stack is MVP-1 unchanged.
 
 Set the single sign-on values in `docker/.env` (see `docker/.env.example`), and in each repository copy
@@ -103,7 +103,7 @@ Set the single sign-on values in `docker/.env` (see `docker/.env.example`), and 
 
 ```sh
 docker compose -f docker/compose.yaml -f docker/compose.sso.yaml up -d
-open https://shop.test:8443/realms/shop/account     # sign in as alice or bob
+open https://shop.test:8443/realms/shop/account     # log in as alice or bob
 ```
 
 | Piece | What it does |
@@ -125,23 +125,23 @@ To start the realm from scratch, remove the database volume:
 `docker compose -f docker/compose.yaml -f docker/compose.sso.yaml down -v`.
 
 **Admin console.** For debugging only, at http://localhost:8081/admin (`KEYCLOAK_DEBUG_PORT`), bound to
-`127.0.0.1`, signed in with the bootstrap admin from `docker/.env`.
+`127.0.0.1`, logged in with the bootstrap admin from `docker/.env`.
 
 **Certificate.** Without `mkcert`, the browser warns once for `https://shop.test` and once for
 `https://shop.test:8443`.
 
-**Signing in to the shop.** The overlay turns sign-in on for the Shell (phase 2): open https://shop.test, sign
-in as `alice` or `bob` with `TEST_USER_PASSWORD`, and sign out from the header. Catalog and Cart follow in phase
-3. Each server keeps its own client secret in its own `.env` (see `shop-shell`'s README). Run the Shell's sign-in
+**Logging in to the shop.** The overlay turns login on for the Shell (phase 2): open https://shop.test, sign
+in as `alice` or `bob` with `TEST_USER_PASSWORD`, and log out from the header. Catalog and Cart follow in phase
+3. Each server keeps its own client secret in its own `.env` (see `shop-shell`'s README). Run the Shell's login
 end-to-end tests from `shop-shell`:
 
 ```sh
 E2E_SSO=1 E2E_BASE_URL=https://shop.test TEST_USER_PASSWORD=… pnpm test:e2e
 ```
 
-Signing in sets three cookies at once, about 4 KB of headers, so nginx's header buffer is raised to 16 KB.
+Logging in sets three cookies at once, about 4 KB of headers, so nginx's header buffer is raised to 16 KB.
 
-**Check.** `docker/sso-check.sh` checks Keycloak against the design: it signs in through Keycloak's own page
-with Playwright inside Docker, as the Shell's sign-in client, then checks tokens, the admin API, refresh,
-sign-out, two tabs, re-running the settings, and that the admin console is not public. It takes about 7
+**Check.** `docker/sso-check.sh` checks Keycloak against the design: it logs in through Keycloak's own page
+with Playwright inside Docker, as the Shell's login client, then checks tokens, the admin API, refresh,
+logout, two tabs, re-running the settings, and that the admin console is not public. It takes about 7
 minutes, because one check waits for an ID token to expire; `--quick` skips that one.

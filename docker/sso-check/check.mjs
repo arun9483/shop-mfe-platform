@@ -9,7 +9,7 @@
 
 import { randomBytes } from 'node:crypto';
 import * as client from 'openid-client';
-import { createRemoteJWKSet, jwtVerify, decodeJwt, CompactEncrypt } from 'jose';
+import { createRemoteJWKSet, jwtVerify, decodeJwt, CompactEncrypt, generateKeyPair, SignJWT } from 'jose';
 import { chromium } from 'playwright';
 
 const PUBLIC_ISSUER = 'https://shop.test:8443/realms/shop';
@@ -376,6 +376,31 @@ async function main() {
     return `shop_at ${sizes.access.raw} B (sent as is); shop_rt ${sizes.refresh.encrypted} B encrypted (raw ${sizes.refresh.raw}); shop_id ${sizes.id.encrypted} B encrypted (raw ${sizes.id.raw})`;
   });
 
+  // Criterion 5 (phase 3): each backend, called directly inside Docker, refuses what is not a valid
+  // access token for it with 401. The expired case is in check 11, which waits for one.
+  await check('15', 'Each backend called directly refuses bad tokens with 401, accepts a valid one', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const claims = decodeJwt(alice.tokens.access_token);
+    const forged = await new SignJWT(claims).setProtectedHeader({ alg: 'RS256', kid: 'forged' }).sign(privateKey);
+    const lines = [];
+    for (const [unit, port] of [['shell', 4001], ['catalog', 4002], ['cart', 4003]]) {
+      const me = (token) =>
+        fetch(`http://${unit}-backend:${port}/me`, token ? { headers: { authorization: `Bearer ${token}` } } : {}).then((r) => r.status);
+      const statuses = {
+        none: await me(),
+        otherKey: await me(forged),
+        idToken: await me(alice.tokens.id_token),
+        valid: await me(alice.tokens.access_token),
+      };
+      expect(statuses.none === 401 && statuses.otherKey === 401 && statuses.idToken === 401, `${unit}: ${JSON.stringify(statuses)}`);
+      expect(statuses.valid === 200, `${unit}: valid token answered ${statuses.valid}`);
+      lines.push(`${unit} ${JSON.stringify(statuses)}`);
+    }
+    const bobAtCatalog = await fetch('http://catalog-backend:4002/me', { headers: { authorization: `Bearer ${bob.tokens.access_token}` } }).then((r) => r.status);
+    expect(bobAtCatalog === 401, `bob's token (no catalog-backend in aud) answered ${bobAtCatalog}`);
+    return `${lines.join('; ')}; bob without catalog-backend in aud: ${bobAtCatalog}`;
+  });
+
   await check('14a', 'https://shop.test:8443/admin/ is refused through nginx', async () => {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     const response = await context.request.get('https://shop.test:8443/admin/', { maxRedirects: 0 });
@@ -402,8 +427,11 @@ async function main() {
       expect(redirected && !confirmation, `at ${session.page.url()}, confirmation ${confirmation}: "${(await session.page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160)}"`);
       await expectRefreshFails(session.tokens.refresh_token);
       await expectSessionGone(session.tokens.access_token);
+      // Criterion 5: the now expired access token, at a backend called directly.
+      const expired = await fetch('http://cart-backend:4003/me', { headers: { authorization: `Bearer ${session.tokens.access_token}` } }).then((r) => r.status);
+      expect(expired === 401, `an expired access token at cart-backend answered ${expired}`);
       await session.context.close();
-      return 'redirected straight back; the refresh token then failed; the sid is gone from the user\'s sessions';
+      return 'redirected straight back; the refresh token then failed; the sid is gone from the user\'s sessions; the expired access token is a 401 at cart-backend';
     });
   }
 

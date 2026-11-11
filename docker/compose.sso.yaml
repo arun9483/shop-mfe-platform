@@ -81,14 +81,22 @@ services:
   shell-backend:
     networks: [shell, idp]
     environment: *login
+  # Login on for Catalog and Cart (MVP-2 phase 3). Their FESes have no client of their own: they accept
+  # tokens the Shell's login client received. Each backend's client ID and secret stay in its own .env.
   catalog-fes:
     networks: [units, catalog, idp]
+    environment: &mfe-fes-login
+      <<: *login
+      LOGIN_CLIENT_ID: shell-fes
   catalog-backend:
     networks: [catalog, idp]
+    environment: *login
   cart-fes:
     networks: [units, cart, idp]
+    environment: *mfe-fes-login
   cart-backend:
     networks: [cart, idp]
+    environment: *login
 
   keycloak-db:
     image: postgres:18.6-alpine

@@ -131,8 +131,9 @@ To start the realm from scratch, remove the database volume:
 `https://shop.test:8443`.
 
 **Logging in to the shop.** The overlay turns login on for the Shell (phase 2): open https://shop.test, sign
-in as `alice` or `bob` with `TEST_USER_PASSWORD`, and log out from the header. Catalog and Cart follow in phase
-3. Each server keeps its own client secret in its own `.env` (see `shop-shell`'s README). Run the Shell's login
+in as `alice` or `bob` with `TEST_USER_PASSWORD`, and log out from the header. Catalog and Cart check the
+same login (phase 3): a user without a role in one of them sees "You do not have access" there, and the rest of
+the shop works. Each server keeps its own client secret in its own `.env` (see `shop-shell`'s README). Run the Shell's login
 end-to-end tests from `shop-shell`:
 
 ```sh

@@ -91,3 +91,46 @@ E2E_BASE_URL=https://shop.test pnpm test:e2e
 Tests that need a server's own port or start their own servers are left out; run `pnpm test:e2e`
 without `E2E_BASE_URL` for those. Docker data appears in New Relic under the apps without the
 `staging` suffix, on hosts that start with `docker-`.
+
+## Single sign-on (MVP-2)
+
+`docker/compose.sso.yaml` adds the shop's identity provider, Keycloak, on top of the stack, as
+[MVP-2](https://github.com/arun9483/arun-mfe-platform/blob/main/docs/mvp-2-sso.md) describes. Without it the
+stack is MVP-1 unchanged. Units do not use it yet.
+
+Set the single sign-on values in `docker/.env` (see `docker/.env.example`), and in each repository copy
+`keycloak/.env.example` to `keycloak/.env` with random secrets. Then:
+
+```sh
+docker compose -f docker/compose.yaml -f docker/compose.sso.yaml up -d
+open https://shop.test:8443/realms/shop/account     # sign in as alice or bob
+```
+
+| Piece | What it does |
+|---|---|
+| `keycloak` | Keycloak, public only through nginx on `https://shop.test:8443`, which refuses `/admin` |
+| `keycloak-db` | Its Postgres database, in the `keycloak-db` volume |
+| `keycloak-config`, `keycloak-grants` | Apply the settings in two passes, then exit: `keycloak/realm.yaml` here and each repository's `keycloak/shop-*.yaml`, then each repository's `keycloak/grants.yaml`, which grants roles to other repositories' service accounts |
+
+**Settings.** Each repository owns its file. Roles are granted through each repository's own groups, because a
+user's client roles in one file would replace those from every other file; group memberships from every file
+are kept. To apply changed settings, run the two passes again:
+
+```sh
+docker compose -f docker/compose.yaml -f docker/compose.sso.yaml run --rm keycloak-config
+docker compose -f docker/compose.yaml -f docker/compose.sso.yaml run --rm keycloak-grants
+```
+
+To start the realm from scratch, remove the database volume:
+`docker compose -f docker/compose.yaml -f docker/compose.sso.yaml down -v`.
+
+**Admin console.** For debugging only, at http://localhost:8081/admin (`KEYCLOAK_DEBUG_PORT`), bound to
+`127.0.0.1`, signed in with the bootstrap admin from `docker/.env`.
+
+**Certificate.** Without `mkcert`, the browser warns once for `https://shop.test` and once for
+`https://shop.test:8443`.
+
+**Check.** `docker/sso-check.sh` checks Keycloak against the design: it signs in through Keycloak's own page
+with Playwright inside Docker, as the Shell's sign-in client, then checks tokens, the admin API, refresh,
+sign-out, two tabs, re-running the settings, and that the admin console is not public. It takes about 7
+minutes, because one check waits for an ID token to expire; `--quick` skips that one.

@@ -15,7 +15,7 @@ import { chromium } from 'playwright';
 const PUBLIC_ISSUER = 'https://shop.test:8443/realms/shop';
 const INTERNAL = 'http://keycloak:8080';
 const CALLBACK = 'https://shop.test/auth/callback';
-const SIGNED_OUT = 'https://shop.test/';
+const SIGNED_OUT = 'https://shop.test/auth/signed-out';
 const UNITS = ['shell', 'catalog', 'cart'];
 const env = (name) => {
   const value = process.env[name];
@@ -89,13 +89,22 @@ async function catchCallbacks(context) {
   return callbacks;
 }
 
+// The browser's request to the callback, with the code. Since phase 2 the Shell FES answers that
+// address and the page moves on at once, so the request is waited for, not the address.
+function toCallback(page, timeout = 30_000) {
+  return page.waitForRequest((request) => request.url().startsWith(CALLBACK), { timeout });
+}
+
 async function fillSignIn(page, username) {
   await page.locator('#username').fill(username);
   await page.locator('#password').fill(env('TEST_USER_PASSWORD'));
   await page.locator('#kc-login').click();
 }
 
-async function finishSignIn(config, attempt, callbackUrl) {
+// The callback for this attempt: its own state. Other callbacks are the Shell FES's own sign-ins.
+async function finishSignIn(config, attempt, callbacks) {
+  const callbackUrl = callbacks.find((url) => new URL(url).searchParams.get('state') === attempt.state);
+  if (!callbackUrl) throw new Error('no callback for this sign-in attempt');
   return client.authorizationCodeGrant(config, new URL(callbackUrl), {
     pkceCodeVerifier: attempt.verifier,
     expectedState: attempt.state,
@@ -109,9 +118,10 @@ async function signIn(browser, config, username) {
   const page = await context.newPage();
   const attempt = await startSignIn(config);
   await page.goto(attempt.url.href);
+  const back = toCallback(page);
   await fillSignIn(page, username);
-  await page.waitForURL(`${CALLBACK}**`);
-  const tokens = await finishSignIn(config, attempt, callbacks.at(-1));
+  await back;
+  const tokens = await finishSignIn(config, attempt, callbacks);
   return { context, page, tokens };
 }
 
@@ -313,23 +323,26 @@ async function main() {
     const [a1, a2] = [await startSignIn(shellFes), await startSignIn(shellFes)];
     await first.goto(a1.url.href);
     await second.goto(a2.url.href);
+    const firstBack = toCallback(first);
     await fillSignIn(first, 'alice');
-    await first.waitForURL(`${CALLBACK}**`);
-    await finishSignIn(shellFes, a1, callbacks.at(-1));
+    await firstBack;
+    await finishSignIn(shellFes, a1, callbacks);
     let outcome;
     try {
+      const secondBack = toCallback(second, 10_000);
       await fillSignIn(second, 'alice');
-      await second.waitForURL(`${CALLBACK}**`, { timeout: 10_000 });
-      await finishSignIn(shellFes, a2, callbacks.at(-1));
+      await secondBack;
+      await finishSignIn(shellFes, a2, callbacks);
       outcome = 'the second tab completed its own sign-in, with its own state';
     } catch {
       const text = (await second.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160);
       outcome = `the second tab did not complete: "${text}" at ${second.url()}`;
       // A fresh start in that tab, as the Shell FES does when a callback fails, must succeed at once.
       const a3 = await startSignIn(shellFes);
+      const thirdBack = toCallback(second, 10_000);
       await second.goto(a3.url.href);
-      await second.waitForURL(`${CALLBACK}**`, { timeout: 10_000 });
-      await finishSignIn(shellFes, a3, callbacks.at(-1));
+      await thirdBack;
+      await finishSignIn(shellFes, a3, callbacks);
       outcome += '; a fresh sign-in in that tab then succeeded without a form (session already there)';
     }
     await context.close();
@@ -343,8 +356,9 @@ async function main() {
     await session.page.goto(url.href);
     const confirm = session.page.locator('#kc-logout');
     expect(await confirm.isVisible(), `no confirmation; at ${session.page.url()}`);
+    const back = session.page.waitForRequest((request) => request.url().startsWith(SIGNED_OUT));
     await confirm.click();
-    await session.page.waitForURL(SIGNED_OUT);
+    await back;
     await expectRefreshFails(session.tokens.refresh_token);
     await expectSessionGone(session.tokens.access_token);
     await session.context.close();
@@ -379,9 +393,12 @@ async function main() {
       console.log(`       waiting ${Math.ceil((lifetime + 15_000) / 1000)} s for the ID token to expire…`);
       await new Promise((resolve) => setTimeout(resolve, lifetime + 15_000));
       const url = client.buildEndSessionUrl(shellFes, { id_token_hint: session.tokens.id_token, post_logout_redirect_uri: SIGNED_OUT });
+      const back = session.page
+        .waitForRequest((request) => request.url().startsWith(SIGNED_OUT), { timeout: 15_000 })
+        .then(() => true, () => false);
       await session.page.goto(url.href);
-      const confirmation = await session.page.locator('#kc-logout').isVisible();
-      const redirected = session.page.url() === SIGNED_OUT;
+      const redirected = await back;
+      const confirmation = !redirected && (await session.page.locator('#kc-logout').isVisible());
       expect(redirected && !confirmation, `at ${session.page.url()}, confirmation ${confirmation}: "${(await session.page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160)}"`);
       await expectRefreshFails(session.tokens.refresh_token);
       await expectSessionGone(session.tokens.access_token);

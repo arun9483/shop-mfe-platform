@@ -1,10 +1,10 @@
 // Checks the shop's identity provider against the MVP-2 design (arun-mfe-platform/docs/mvp-2-sso.md).
-// Runs inside Docker on the edge and idp networks, through ../sso-check.sh. A browser (Chromium) signs in
+// Runs inside Docker on the edge and idp networks, through ../sso-check.sh. A browser (Chromium) logs in
 // on Keycloak's own page as the real shell-fes client; servers' calls go to Keycloak inside Docker, as the
 // units' servers will.
 //
 //   node check.mjs            every check
-//   node check.mjs --quick    without the 6-minute expired-ID-token sign-out check
+//   node check.mjs --quick    without the 6-minute expired-ID-token logout check
 //   node check.mjs --roles    only print every unit's roles and grants (used around importer re-runs)
 
 import { randomBytes } from 'node:crypto';
@@ -15,7 +15,7 @@ import { chromium } from 'playwright';
 const PUBLIC_ISSUER = 'https://shop.test:8443/realms/shop';
 const INTERNAL = 'http://keycloak:8080';
 const CALLBACK = 'https://shop.test/auth/callback';
-const SIGNED_OUT = 'https://shop.test/';
+const LOGGED_OUT = 'https://shop.test/auth/logged-out';
 const UNITS = ['shell', 'catalog', 'cart'];
 const env = (name) => {
   const value = process.env[name];
@@ -62,7 +62,7 @@ function configuration(server, clientId, secret) {
   return config;
 }
 
-// --- Browser sign-in as shell-fes -----------------------------------------------------------------
+// --- Browser login as shell-fes -----------------------------------------------------------------
 
 async function startSignIn(config) {
   const verifier = client.randomPKCECodeVerifier();
@@ -89,13 +89,22 @@ async function catchCallbacks(context) {
   return callbacks;
 }
 
-async function fillSignIn(page, username) {
+// The browser's request to the callback, with the code. Since phase 2 the Shell FES answers that
+// address and the page moves on at once, so the request is waited for, not the address.
+function toCallback(page, timeout = 30_000) {
+  return page.waitForRequest((request) => request.url().startsWith(CALLBACK), { timeout });
+}
+
+async function fillLogin(page, username) {
   await page.locator('#username').fill(username);
   await page.locator('#password').fill(env('TEST_USER_PASSWORD'));
   await page.locator('#kc-login').click();
 }
 
-async function finishSignIn(config, attempt, callbackUrl) {
+// The callback for this attempt: its own state. Other callbacks are the Shell FES's own logins.
+async function finishSignIn(config, attempt, callbacks) {
+  const callbackUrl = callbacks.find((url) => new URL(url).searchParams.get('state') === attempt.state);
+  if (!callbackUrl) throw new Error('no callback for this login attempt');
   return client.authorizationCodeGrant(config, new URL(callbackUrl), {
     pkceCodeVerifier: attempt.verifier,
     expectedState: attempt.state,
@@ -103,15 +112,16 @@ async function finishSignIn(config, attempt, callbackUrl) {
   });
 }
 
-async function signIn(browser, config, username) {
+async function login(browser, config, username) {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   const callbacks = await catchCallbacks(context);
   const page = await context.newPage();
   const attempt = await startSignIn(config);
   await page.goto(attempt.url.href);
-  await fillSignIn(page, username);
-  await page.waitForURL(`${CALLBACK}**`);
-  const tokens = await finishSignIn(config, attempt, callbacks.at(-1));
+  const back = toCallback(page);
+  await fillLogin(page, username);
+  await back;
+  const tokens = await finishSignIn(config, attempt, callbacks);
   return { context, page, tokens };
 }
 
@@ -140,7 +150,7 @@ async function bootstrapAdminToken() {
       password: env('KEYCLOAK_ADMIN_PASSWORD'),
     }),
   });
-  expect(response.ok, `admin sign-in answered ${response.status}`);
+  expect(response.ok, `admin login answered ${response.status}`);
   return (await response.json()).access_token;
 }
 
@@ -201,11 +211,11 @@ async function main() {
   let alice;
   let bob;
   try {
-    alice = await signIn(browser, shellFes, 'alice');
-    bob = await signIn(browser, shellFes, 'bob');
-    record('', null, 'Signed in alice and bob through Keycloak\'s page as shell-fes; ID tokens checked by openid-client');
+    alice = await login(browser, shellFes, 'alice');
+    bob = await login(browser, shellFes, 'bob');
+    record('', null, 'Logged in alice and bob through Keycloak\'s page as shell-fes; ID tokens checked by openid-client');
   } catch (error) {
-    record('', false, 'Browser sign-in', error.message);
+    record('', false, 'Browser login', error.message);
     await browser.close();
     return;
   }
@@ -306,45 +316,49 @@ async function main() {
     return 'both refreshes returned new access and ID tokens';
   });
 
-  await check('10', 'Two tabs: sign-in started in both, finished in one, then submitted in the other', async () => {
+  await check('10', 'Two tabs: login started in both, finished in one, then submitted in the other', async () => {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     const callbacks = await catchCallbacks(context);
     const [first, second] = [await context.newPage(), await context.newPage()];
     const [a1, a2] = [await startSignIn(shellFes), await startSignIn(shellFes)];
     await first.goto(a1.url.href);
     await second.goto(a2.url.href);
-    await fillSignIn(first, 'alice');
-    await first.waitForURL(`${CALLBACK}**`);
-    await finishSignIn(shellFes, a1, callbacks.at(-1));
+    const firstBack = toCallback(first);
+    await fillLogin(first, 'alice');
+    await firstBack;
+    await finishSignIn(shellFes, a1, callbacks);
     let outcome;
     try {
-      await fillSignIn(second, 'alice');
-      await second.waitForURL(`${CALLBACK}**`, { timeout: 10_000 });
-      await finishSignIn(shellFes, a2, callbacks.at(-1));
-      outcome = 'the second tab completed its own sign-in, with its own state';
+      const secondBack = toCallback(second, 10_000);
+      await fillLogin(second, 'alice');
+      await secondBack;
+      await finishSignIn(shellFes, a2, callbacks);
+      outcome = 'the second tab completed its own login, with its own state';
     } catch {
       const text = (await second.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160);
       outcome = `the second tab did not complete: "${text}" at ${second.url()}`;
       // A fresh start in that tab, as the Shell FES does when a callback fails, must succeed at once.
       const a3 = await startSignIn(shellFes);
+      const thirdBack = toCallback(second, 10_000);
       await second.goto(a3.url.href);
-      await second.waitForURL(`${CALLBACK}**`, { timeout: 10_000 });
-      await finishSignIn(shellFes, a3, callbacks.at(-1));
-      outcome += '; a fresh sign-in in that tab then succeeded without a form (session already there)';
+      await thirdBack;
+      await finishSignIn(shellFes, a3, callbacks);
+      outcome += '; a fresh login in that tab then succeeded without a form (session already there)';
     }
     await context.close();
     return outcome;
   });
 
-  await check('12', 'Sign-out with only client_id shows Keycloak\'s confirmation page', async () => {
-    const session = await signIn(browser, shellFes, 'bob');
+  await check('12', 'Logout with only client_id shows Keycloak\'s confirmation page', async () => {
+    const session = await login(browser, shellFes, 'bob');
     const url = new URL(server.end_session_endpoint);
-    url.search = new URLSearchParams({ client_id: 'shell-fes', post_logout_redirect_uri: SIGNED_OUT }).toString();
+    url.search = new URLSearchParams({ client_id: 'shell-fes', post_logout_redirect_uri: LOGGED_OUT }).toString();
     await session.page.goto(url.href);
     const confirm = session.page.locator('#kc-logout');
     expect(await confirm.isVisible(), `no confirmation; at ${session.page.url()}`);
+    const back = session.page.waitForRequest((request) => request.url().startsWith(LOGGED_OUT));
     await confirm.click();
-    await session.page.waitForURL(SIGNED_OUT);
+    await back;
     await expectRefreshFails(session.tokens.refresh_token);
     await expectSessionGone(session.tokens.access_token);
     await session.context.close();
@@ -371,17 +385,20 @@ async function main() {
   });
 
   if (args.has('--quick')) {
-    record('11', null, 'Skipped (--quick): sign-out with an expired ID token');
+    record('11', null, 'Skipped (--quick): logout with an expired ID token');
   } else {
-    await check('11', 'Sign-out with an expired id_token_hint (5+ min old): no confirmation, session ends', async () => {
-      const session = await signIn(browser, shellFes, 'bob');
+    await check('11', 'Logout with an expired id_token_hint (5+ min old): no confirmation, session ends', async () => {
+      const session = await login(browser, shellFes, 'bob');
       const lifetime = decodeJwt(session.tokens.id_token).exp * 1000 - Date.now();
       console.log(`       waiting ${Math.ceil((lifetime + 15_000) / 1000)} s for the ID token to expire…`);
       await new Promise((resolve) => setTimeout(resolve, lifetime + 15_000));
-      const url = client.buildEndSessionUrl(shellFes, { id_token_hint: session.tokens.id_token, post_logout_redirect_uri: SIGNED_OUT });
+      const url = client.buildEndSessionUrl(shellFes, { id_token_hint: session.tokens.id_token, post_logout_redirect_uri: LOGGED_OUT });
+      const back = session.page
+        .waitForRequest((request) => request.url().startsWith(LOGGED_OUT), { timeout: 15_000 })
+        .then(() => true, () => false);
       await session.page.goto(url.href);
-      const confirmation = await session.page.locator('#kc-logout').isVisible();
-      const redirected = session.page.url() === SIGNED_OUT;
+      const redirected = await back;
+      const confirmation = !redirected && (await session.page.locator('#kc-logout').isVisible());
       expect(redirected && !confirmation, `at ${session.page.url()}, confirmation ${confirmation}: "${(await session.page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160)}"`);
       await expectRefreshFails(session.tokens.refresh_token);
       await expectSessionGone(session.tokens.access_token);
@@ -394,12 +411,12 @@ async function main() {
   await bob.context.close();
   await browser.close();
 
-  // What a backend's /me sees right after sign-out: the token's sid is no longer a live session.
+  // What a backend's /me sees right after logout: the token's sid is no longer a live session.
   async function expectSessionGone(accessToken) {
     const { sub, sid } = decodeJwt(accessToken);
     const adminToken = await serviceToken(server, 'catalog-backend', env('CATALOG_BACKEND_SECRET'), 'kc-admin-api');
     const sessions = await admin(adminToken, `/users/${sub}/sessions`);
-    expect(!sessions.some((x) => x.id === sid), 'the session is still live after sign-out');
+    expect(!sessions.some((x) => x.id === sid), 'the session is still live after logout');
   }
 
   async function expectRefreshFails(refreshToken) {
@@ -408,7 +425,7 @@ async function main() {
     } catch {
       return;
     }
-    throw new Error('refresh still works after sign-out');
+    throw new Error('refresh still works after logout');
   }
 }
 

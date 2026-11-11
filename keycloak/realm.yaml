@@ -1,0 +1,43 @@
+# Realm basics for the shop's identity provider, applied first by the settings importer in
+# docker/compose.sso.yaml. Each repository adds its own clients and roles in its keycloak/ folder.
+# Secrets come from docker/.env.
+realm: shop
+enabled: true
+sslRequired: external
+# Lightweight access tokens and ID tokens live 5 min; refresh stops when the session ends.
+accessTokenLifespan: 300
+ssoSessionIdleTimeout: 1800
+ssoSessionMaxLifespan: 36000
+# Several tabs may refresh with the same refresh token.
+revokeRefreshToken: false
+
+# Test users. Each repository's file grants them its own roles; bob has no Catalog role.
+users:
+  - username: alice
+    enabled: true
+    email: alice@example.com
+    emailVerified: true
+    firstName: Alice
+    lastName: Test
+    credentials:
+      - type: password
+        value: $(env:TEST_USER_PASSWORD)
+  - username: bob
+    enabled: true
+    email: bob@example.com
+    emailVerified: true
+    firstName: Bob
+    lastName: Test
+    credentials:
+      - type: password
+        value: $(env:TEST_USER_PASSWORD)
+
+clients:
+  # The operator's caller for /health/units* and /version/units*; shop-router grants it the ops role.
+  - clientId: shop-ops
+    protocol: openid-connect
+    publicClient: false
+    secret: $(env:SHOP_OPS_SECRET)
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true

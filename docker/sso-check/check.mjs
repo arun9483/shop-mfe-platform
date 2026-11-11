@@ -401,6 +401,42 @@ async function main() {
     return `${lines.join('; ')}; bob without catalog-backend in aud: ${bobAtCatalog}`;
   });
 
+  // Criterion 10 (phase 4): backend to backend with API roles (ADR 0005).
+  await check('17', 'Catalog\'s /service/products: only a service granted catalog-api:read-products', async () => {
+    const products = 'http://catalog-backend:4002/service/products?ids=mug';
+    const call = (token) =>
+      fetch(products, token ? { headers: { authorization: `Bearer ${token}`, 'x-shop-user-sub': 'user-1' } } : {}).then((r) => r.status);
+    const cart = await serviceToken(server, 'cart-backend', env('CART_BACKEND_SECRET'));
+    const ops = await serviceToken(server, 'shop-ops', env('SHOP_OPS_SECRET'));
+    const statuses = { cart: await call(cart), ops: await call(ops), user: await call(alice.tokens.access_token), none: await call() };
+    expect(statuses.cart === 200 && statuses.user === 401 && statuses.none === 401, JSON.stringify(statuses));
+    expect(statuses.ops === 401 || statuses.ops === 403, `shop-ops answered ${statuses.ops}`);
+    return `Cart's service token ${statuses.cart}; shop-ops (no grant, no catalog-backend in aud) ${statuses.ops}; a user's token ${statuses.user}; none ${statuses.none}`;
+  });
+
+  // Criterion 11 (phase 4): the operator token on the router's unit health.
+  await check('18', '/health/units* and /version/units* need the ops role; the router\'s own health is public', async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const get = (path, token) =>
+      context.request.get(`https://shop.test${path}`, token ? { headers: { authorization: `Bearer ${token}` } } : {}).then((r) => r.status());
+    const ops = await serviceToken(server, 'shop-ops', env('SHOP_OPS_SECRET'));
+    const cart = await serviceToken(server, 'cart-backend', env('CART_BACKEND_SECRET'));
+    const statuses = {
+      none: await get('/health/units'),
+      cart: await get('/health/units', cart),
+      user: await get('/health/units', alice.tokens.access_token),
+      ops: await get('/health/units', ops),
+      opsVersions: await get('/version/units/catalog', ops),
+      live: await get('/health/live'),
+      version: await get('/version'),
+    };
+    await context.close();
+    expect(statuses.none === 401 && statuses.cart === 401 && statuses.user === 401, JSON.stringify(statuses));
+    expect(statuses.ops === 200 && statuses.opsVersions === 200, JSON.stringify(statuses));
+    expect(statuses.live === 200 && statuses.version === 200, JSON.stringify(statuses));
+    return JSON.stringify(statuses);
+  });
+
   await check('14a', 'https://shop.test:8443/admin/ is refused through nginx', async () => {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     const response = await context.request.get('https://shop.test:8443/admin/', { maxRedirects: 0 });

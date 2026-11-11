@@ -50,7 +50,7 @@ x-importer: &importer
     - ../../shop-catalog/keycloak:/config/shop-catalog:ro
     - ../../shop-cart/keycloak:/config/shop-cart:ro
     - ../../shop-router/keycloak:/config/shop-router:ro
-  networks: [idp]
+  networks: [idp-admin]
 
 # What a server needs to reach the IdP: the issuer tokens carry, and Keycloak inside Docker.
 x-login: &login
@@ -68,35 +68,45 @@ services:
       edge:
         # Containers on the edge network reach the public origins as a browser does.
         aliases: [shop.test]
-      idp:
+      idp-edge:
 
+  # The operator token on /health/units* and /version/units* (MVP-2 phase 4): shop-ops holds the ops role.
   shop-router:
-    networks: [edge, units, idp]
+    networks: [edge, units, idp-router]
+    environment:
+      HEALTH_UNITS_AUTH: 'true'
+      OIDC_ISSUER_URL: https://shop.test:8443/realms/shop
+      OIDC_INTERNAL_URL: http://keycloak:8080/realms/shop
   # Login on for the Shell (MVP-2 phase 2). Each server's client ID and secret stay in its own .env.
   shell-fes:
-    networks: [units, shell, idp]
+    networks: [units, shell, idp-shell]
     environment:
       <<: *login
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://shop.test}
   shell-backend:
-    networks: [shell, idp]
+    networks: [shell, idp-shell]
     environment: *login
   # Login on for Catalog and Cart (MVP-2 phase 3). Their FESes have no client of their own: they accept
   # tokens the Shell's login client received. Each backend's client ID and secret stay in its own .env.
   catalog-fes:
-    networks: [units, catalog, idp]
+    networks: [units, catalog, idp-catalog]
     environment: &mfe-fes-login
       <<: *login
       LOGIN_CLIENT_ID: shell-fes
+  # catalog-api: Catalog's backend and the backends Catalog grants catalog-api roles to
+  # (shop-catalog/keycloak/grants.yaml). Nothing else reaches it.
   catalog-backend:
-    networks: [catalog, idp]
+    networks: [catalog, idp-catalog, catalog-api]
     environment: *login
   cart-fes:
-    networks: [units, cart, idp]
+    networks: [units, cart, idp-cart]
     environment: *mfe-fes-login
+  # Cart reads names and prices from Catalog's backend with its own service access token (phase 4).
   cart-backend:
-    networks: [cart, idp]
-    environment: *login
+    networks: [cart, idp-cart, catalog-api]
+    environment:
+      <<: *login
+      CATALOG_BACKEND_URL: http://catalog-backend:4002
 
   keycloak-db:
     image: postgres:18.6-alpine
@@ -150,7 +160,9 @@ services:
       timeout: 3s
       retries: 30
       start_period: 30s
-    networks: [idp, idp-db]
+    # One network per unit to Keycloak, so a unit reaches Keycloak and nothing of another unit: a shared
+    # network would let every container reach every backend.
+    networks: [idp-edge, idp-router, idp-shell, idp-catalog, idp-cart, idp-admin, idp-db]
 
   # Pass 1: realm basics, then each repository's own clients, roles and grants.
   keycloak-config:
@@ -173,5 +185,12 @@ volumes:
   keycloak-db:
 
 networks:
-  idp:
+  idp-edge:
+  idp-router:
+  idp-shell:
+  idp-catalog:
+  idp-cart:
+  # Keycloak's importer and docker/sso-check.sh.
+  idp-admin:
   idp-db:
+  catalog-api:

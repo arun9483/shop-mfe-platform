@@ -23,7 +23,9 @@ for repo in shop-shell shop-catalog shop-cart; do
 done
 
 run_check() {
-  docker run --rm --network shop_edge --network shop_idp "${env_files[@]}" \
+  # The public origins (edge), Keycloak (idp-admin) and each unit's own network, to call backends directly.
+  docker run --rm --network shop_edge --network shop_idp-admin --network shop_shell \
+    --network shop_catalog --network shop_cart "${env_files[@]}" \
     -v "$PWD/sso-check:/src:ro" "$playwright_image" \
     sh -c 'mkdir -p /work && cp /src/package.json /src/pnpm-lock.yaml /src/check.mjs /work/ && cd /work &&
       npx --yes pnpm@11.28.5 install --frozen-lockfile --reporter=silent && node check.mjs "$@"' \
@@ -71,6 +73,45 @@ if [ "$local_status" = 200 ] && [ "$lan_status" != 200 ] && [ "$lan_status" != 3
   echo "PASS  14b localhost:$port answers $local_status; $lan_ip:$port answers ${lan_status:-nothing}"
 else
   echo "FAIL  14b localhost:$port answers $local_status; ${lan_ip:-other address}:$port answers $lan_status"
+  failed=1
+fi
+
+echo
+echo "Check 16: networks keep each backend private (MVP-1's rule, with the overlay on)"
+# 0 when the URL answers from inside the container, otherwise not.
+reach() {
+  local container=$1 url=$2
+  if [ "$container" = nginx ]; then
+    docker exec "shop-$container-1" wget -q -T 2 -O /dev/null "$url" >/dev/null 2>&1
+  else
+    docker exec "shop-$container-1" node -e \
+      "fetch(process.argv[1], { signal: AbortSignal.timeout(2000) }).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(2))" \
+      "$url" >/dev/null 2>&1
+  fi
+}
+isolation_failed=0
+expect_reach() {
+  local want=$1 container=$2 url=$3 got=no
+  reach "$container" "$url" && got=yes
+  if [ "$want" != "$got" ]; then
+    echo "      $container -> $url: reachable=$got, expected $want"
+    isolation_failed=1
+  fi
+}
+expect_reach yes cart-backend http://catalog-backend:4002/health/live # catalog-api: Catalog's grant
+expect_reach no cart-backend http://shell-backend:4001/health/live
+# A network is two-way: Catalog's backend can reach Cart's too. Cart's backend still refuses any call
+# without a valid token for it (check 15); one-way would need a proxy, more than this POC needs.
+expect_reach yes catalog-backend http://cart-backend:4003/health/live
+expect_reach no catalog-fes http://cart-backend:4003/health/live
+expect_reach no shell-fes http://catalog-backend:4002/health/live
+expect_reach no shop-router http://catalog-backend:4002/health/live
+expect_reach no nginx http://catalog-backend:4002/health/live
+expect_reach yes shop-router http://keycloak:8080/realms/shop
+if [ "$isolation_failed" = 0 ]; then
+  echo "PASS  16  Cart's and Catalog's backends reach each other (catalog-api, two-way); no other unit, the router or nginx reaches a backend"
+else
+  echo "FAIL  16  a backend is reachable where it should not be, or not where it should"
   failed=1
 fi
 

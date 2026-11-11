@@ -142,6 +142,14 @@ E2E_SSO=1 E2E_BASE_URL=https://shop.test TEST_USER_PASSWORD=… pnpm test:e2e
 
 Logging in sets three cookies at once, about 4 KB of headers, so nginx's header buffer is raised to 16 KB.
 
+**Unit health.** With the overlay, `/health/units*` and `/version/units*` need the operator token (see
+`shop-router`'s README for the `curl` commands); each server's own health stays public.
+
+**Networks.** Each unit reaches Keycloak on its own network (`idp-shell`, `idp-catalog`, …), so no unit, the
+router or nginx can reach another unit's backend. Catalog's backend and the backends it grants share
+`catalog-api` (today Cart's), for backend-to-backend calls; a network is two-way, so Cart's backend relies on
+its own token checks there.
+
 **Check.** `docker/sso-check.sh` checks Keycloak against the design: it logs in through Keycloak's own page
 with Playwright inside Docker, as the Shell's login client, then checks tokens, the admin API, refresh,
 logout, two tabs, re-running the settings, and that the admin console is not public. It takes about 7

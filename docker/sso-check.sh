@@ -17,6 +17,10 @@ set +a
 compose=(docker compose -f compose.yaml -f compose.sso.yaml)
 playwright_image=mcr.microsoft.com/playwright:v1.64.1-noble
 
+# The IdP adapter contract (check 19) runs shop-shell's built server-common against Keycloak.
+shell_common="$(cd "$repos/shop-shell/server-common" && pwd)/dist"
+[ -f "$shell_common/auth/idp/contract.js" ] || { echo "Build shop-shell's server-common first (pnpm build)"; exit 1; }
+
 env_files=(--env-file .env)
 for repo in shop-shell shop-catalog shop-cart; do
   env_files+=(--env-file "$repos/$repo/keycloak/.env")
@@ -26,8 +30,9 @@ run_check() {
   # The public origins (edge), Keycloak (idp-admin) and each unit's own network, to call backends directly.
   docker run --rm --network shop_edge --network shop_idp-admin --network shop_shell \
     --network shop_catalog --network shop_cart "${env_files[@]}" \
-    -v "$PWD/sso-check:/src:ro" "$playwright_image" \
-    sh -c 'mkdir -p /work && cp /src/package.json /src/pnpm-lock.yaml /src/check.mjs /work/ && cd /work &&
+    -v "$PWD/sso-check:/src:ro" -v "$shell_common:/shell-common:ro" "$playwright_image" \
+    sh -c 'mkdir -p /work && cp /src/package.json /src/pnpm-lock.yaml /src/check.mjs /work/ &&
+      cp -R /shell-common /work/shell-common && cd /work &&
       npx --yes pnpm@11.28.5 install --frozen-lockfile --reporter=silent && node check.mjs "$@"' \
     check "$@"
 }

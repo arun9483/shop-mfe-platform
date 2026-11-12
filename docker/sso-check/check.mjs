@@ -9,7 +9,7 @@
 
 import { randomBytes } from 'node:crypto';
 import * as client from 'openid-client';
-import { createRemoteJWKSet, jwtVerify, decodeJwt, CompactEncrypt, generateKeyPair, SignJWT } from 'jose';
+import { createRemoteJWKSet, jwtVerify, decodeJwt, decodeProtectedHeader, CompactEncrypt, generateKeyPair, SignJWT } from 'jose';
 import { chromium } from 'playwright';
 
 const PUBLIC_ISSUER = 'https://shop.test:8443/realms/shop';
@@ -349,6 +349,7 @@ async function main() {
     return outcome;
   });
 
+  let ended;
   await check('12', 'Logout with only client_id shows Keycloak\'s confirmation page', async () => {
     const session = await login(browser, shellFes, 'bob');
     const url = new URL(server.end_session_endpoint);
@@ -361,6 +362,7 @@ async function main() {
     await back;
     await expectRefreshFails(session.tokens.refresh_token);
     await expectSessionGone(session.tokens.access_token);
+    ended = decodeJwt(session.tokens.access_token);
     await session.context.close();
     return 'confirmation shown; after confirming, redirected, refresh failed and the sid is gone from the user\'s sessions';
   });
@@ -401,11 +403,47 @@ async function main() {
     return `${lines.join('; ')}; bob without catalog-backend in aud: ${bobAtCatalog}`;
   });
 
+  // Criterion 13 (phase 5): the Keycloak adapter, from shop-shell's built server-common, passes the
+  // same contract the unit tests check a fake IdP against (ADR 0004).
+  await check('19', 'The Keycloak adapter passes the IdP adapter contract, and fails closed when unreachable', async () => {
+    const { checkAdapterContract, checkUnavailableContract } = await import('./shell-common/auth/idp/contract.js');
+    const { keycloakAdapter } = await import('./shell-common/auth/idp/keycloak.js');
+    const { lazyIdp } = await import('./shell-common/auth/metadata.js');
+    const settings = {
+      issuer: PUBLIC_ISSUER,
+      internalUrl: `${INTERNAL}/realms/shop`,
+      clientId: 'catalog-backend',
+      clientSecret: env('CATALOG_BACKEND_SECRET'),
+    };
+    expect(ended, 'needs check 12 (a logged-out session)');
+    const decoded = (token) => ({ header: decodeProtectedHeader(token), claims: decodeJwt(token) });
+    const { sub, sid } = decodeJwt(alice.tokens.access_token);
+    const checked = await checkAdapterContract(keycloakAdapter(lazyIdp(settings)), {
+      user: { sub, sid, username: 'alice', unit: 'catalog', roles: ['catalog-editor', 'catalog-viewer'] },
+      userWithoutRole: { sub: decodeJwt(bob.tokens.access_token).sub },
+      endedSession: { sub: ended.sub, sid: ended.sid },
+      unknownSub: '00000000-0000-0000-0000-000000000000',
+      tokens: {
+        access: decoded(alice.tokens.access_token),
+        id: decoded(alice.tokens.id_token),
+        refresh: decoded(alice.tokens.refresh_token),
+      },
+      service: {
+        claims: decodeJwt(await serviceToken(server, 'cart-backend', env('CART_BACKEND_SECRET'))),
+        client: 'catalog-backend',
+        role: 'catalog-api:read-products',
+      },
+    });
+    const unreachable = keycloakAdapter(lazyIdp({ ...settings, internalUrl: 'http://127.0.0.1:9/realms/shop' }, 500), 500);
+    checked.push(await checkUnavailableContract(unreachable, sub, sid));
+    return checked.join('; ');
+  });
+
   // Criterion 10 (phase 4): backend to backend with API roles (ADR 0005).
   await check('17', 'Catalog\'s /service/products: only a service granted catalog-api:read-products', async () => {
     const products = 'http://catalog-backend:4002/service/products?ids=mug';
     const call = (token) =>
-      fetch(products, token ? { headers: { authorization: `Bearer ${token}`, 'x-shop-user-sub': 'user-1' } } : {}).then((r) => r.status);
+      fetch(products, token ? { headers: { authorization: `Bearer ${token}`, 'x-shop-user-sub': decodeJwt(alice.tokens.access_token).sub } } : {}).then((r) => r.status);
     const cart = await serviceToken(server, 'cart-backend', env('CART_BACKEND_SECRET'));
     const ops = await serviceToken(server, 'shop-ops', env('SHOP_OPS_SECRET'));
     const statuses = { cart: await call(cart), ops: await call(ops), user: await call(alice.tokens.access_token), none: await call() };

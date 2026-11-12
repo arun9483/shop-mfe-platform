@@ -150,6 +150,10 @@ router or nginx can reach another unit's backend. Catalog's backend and the back
 `catalog-api` (today Cart's), for backend-to-backend calls; a network is two-way, so Cart's backend relies on
 its own token checks there.
 
+**Keycloak down.** shop-shell's `idp-down.spec.ts` stops Keycloak, checks that every unit fails closed and that
+pages say so, then starts it again; see shop-shell's README. Check 19 of `sso-check.sh` runs the IdP adapter
+contract against Keycloak with shop-shell's built `server-common` (run `pnpm build` in shop-shell first).
+
 **Check.** `docker/sso-check.sh` checks Keycloak against the design: it logs in through Keycloak's own page
 with Playwright inside Docker, as the Shell's login client, then checks tokens, the admin API, refresh,
 logout, two tabs, re-running the settings, and that the admin console is not public. It takes about 7

@@ -60,6 +60,11 @@ x-login: &login
 
 services:
   nginx:
+    # Keycloak's login page opens only once every repository's settings are applied. It also makes
+    # `up --wait` expect the importers to finish: otherwise it reports their normal exit as an error.
+    depends_on:
+      keycloak-grants:
+        condition: service_completed_successfully
     ports:
       - '8443:8443'
     volumes:

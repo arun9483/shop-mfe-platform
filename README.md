@@ -99,16 +99,24 @@ without `E2E_BASE_URL` for those. Docker data appears in New Relic under the app
 on for the units that support it. Without it the stack is MVP-1 unchanged.
 
 Set the single sign-on values in `docker/.env` (see `docker/.env.example`), and in each repository copy
-`keycloak/.env.example` to `keycloak/.env` with random secrets. Then:
+`keycloak/.env.example` to `keycloak/.env` with random secrets. Keycloak has its own host, `IDP_HOST` (default
+`idp.test`), so add it to `/etc/hosts` and run `docker/build.sh` again for a certificate that covers it. Then:
 
 ```sh
+sudo sh -c 'echo "127.0.0.1 idp.test" >> /etc/hosts'
 docker compose -f docker/compose.yaml -f docker/compose.sso.yaml up -d
-open https://shop.test:8443/realms/shop/account     # log in as alice or bob
+open https://idp.test/realms/shop/account     # log in as alice or bob
 ```
+
+**Its own host.** Browser cookies belong to a host, whatever the port. On the shop's host, Keycloak received
+the shop's cookies (`shop_at` included) and stored its own cookies there (MVP-2 verification, F4). On its
+own host, `idp.test`, neither sees the other's cookies. It is a separate site, not a subdomain of the shop, so
+`*.shop.test` stays free for tenants (e.g. `orgA.shop.test`). nginx serves both on port 443 by host name; every
+host other than the IdP's goes to the shop.
 
 | Piece | What it does |
 |---|---|
-| `keycloak` | Keycloak, public only through nginx on `https://shop.test:8443`, which refuses `/admin` |
+| `keycloak` | Keycloak, public only through nginx on `https://idp.test`, which refuses `/admin` |
 | `keycloak-db` | Its Postgres database, in the `keycloak-db` volume |
 | `keycloak-config`, `keycloak-grants` | Apply the settings in two passes, then exit: `keycloak/realm.yaml` here and each repository's `keycloak/shop-*.yaml`, then each repository's `keycloak/grants.yaml`, which grants roles to other repositories' service accounts |
 
@@ -127,8 +135,8 @@ To start the realm from scratch, remove the database volume:
 **Admin console.** For debugging only, at http://localhost:8081/admin (`KEYCLOAK_DEBUG_PORT`), bound to
 `127.0.0.1`, logged in with the bootstrap admin from `docker/.env`.
 
-**Certificate.** Without `mkcert`, the browser warns once for `https://shop.test` and once for
-`https://shop.test:8443`.
+**Certificate.** `build.sh` makes one certificate for `shop.test` and `idp.test`. Without `mkcert`, the
+browser warns once for each host.
 
 **Logging in to the shop.** The overlay turns login on for the Shell (phase 2): open https://shop.test, sign
 in as `alice` or `bob` with `TEST_USER_PASSWORD`, and log out from the header. Catalog and Cart check the

@@ -12,7 +12,8 @@ import * as client from 'openid-client';
 import { createRemoteJWKSet, jwtVerify, decodeJwt, decodeProtectedHeader, CompactEncrypt, generateKeyPair, SignJWT } from 'jose';
 import { chromium } from 'playwright';
 
-const PUBLIC_ISSUER = 'https://shop.test:8443/realms/shop';
+const IDP_ORIGIN = `https://${process.env.IDP_HOST || 'idp.test'}`;
+const PUBLIC_ISSUER = `${IDP_ORIGIN}/realms/shop`;
 const INTERNAL = 'http://keycloak:8080';
 const CALLBACK = 'https://shop.test/auth/callback';
 const LOGGED_OUT = 'https://shop.test/auth/logged-out';
@@ -199,7 +200,7 @@ async function main() {
     server = await metadata();
     expect(new URL(server.jwks_uri).host === 'keycloak:8080', `jwks_uri is ${server.jwks_uri}`);
     expect(new URL(server.token_endpoint).host === 'keycloak:8080', `token_endpoint is ${server.token_endpoint}`);
-    expect(new URL(server.authorization_endpoint).origin === 'https://shop.test:8443', `authorization_endpoint is ${server.authorization_endpoint}`);
+    expect(new URL(server.authorization_endpoint).origin === IDP_ORIGIN, `authorization_endpoint is ${server.authorization_endpoint}`);
     return `issuer ${server.issuer}; jwks ${server.jwks_uri}; authorize ${server.authorization_endpoint}; end session ${server.end_session_endpoint}`;
   });
   if (!server) return;
@@ -475,9 +476,9 @@ async function main() {
     return JSON.stringify(statuses);
   });
 
-  await check('14a', 'https://shop.test:8443/admin/ is refused through nginx', async () => {
+  await check('14a', `${IDP_ORIGIN}/admin/ is refused through nginx`, async () => {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    const response = await context.request.get('https://shop.test:8443/admin/', { maxRedirects: 0 });
+    const response = await context.request.get(`${IDP_ORIGIN}/admin/`, { maxRedirects: 0 });
     await context.close();
     expect(response.status() === 404, `status ${response.status()}`);
     return 'status 404';

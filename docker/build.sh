@@ -12,13 +12,16 @@ repos="${SHOP_REPOS_DIR:-../..}"
 
 host="${PUBLIC_ORIGIN#*://}"
 host="${host%%[:/]*}"
+# One certificate for the shop and, with login on, its IdP on its own host (F4).
+idp_host="${IDP_HOST:-idp.test}"
+covers() { openssl x509 -in certs/cert.pem -noout -checkhost "$1" 2>/dev/null | grep -q 'does match'; }
 mkdir -p certs
-if ! openssl x509 -in certs/cert.pem -noout -checkhost "$host" 2>/dev/null | grep -q 'does match'; then
+if ! covers "$host" || ! covers "$idp_host"; then
   if command -v mkcert >/dev/null; then
-    mkcert -cert-file certs/cert.pem -key-file certs/key.pem "$host" localhost
+    mkcert -cert-file certs/cert.pem -key-file certs/key.pem "$host" "$idp_host" localhost
   else
     openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout certs/key.pem -out certs/cert.pem \
-      -subj "/CN=$host" -addext "subjectAltName=DNS:$host,DNS:localhost"
+      -subj "/CN=$host" -addext "subjectAltName=DNS:$host,DNS:$idp_host,DNS:localhost"
   fi
 fi
 

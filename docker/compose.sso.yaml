@@ -2,8 +2,8 @@
 #
 #   docker compose -f docker/compose.yaml -f docker/compose.sso.yaml up -d --wait
 #
-# Without this file the stack is MVP-1 unchanged. Keycloak is public only through nginx on
-# https://shop.test:8443, which refuses /admin; its admin console is on 127.0.0.1 only, for debugging.
+# Without this file the stack is MVP-1 unchanged. Keycloak is public only through nginx on its own host,
+# https://$IDP_HOST (default idp.test), which refuses /admin; its admin console is on 127.0.0.1 only, for debugging.
 # Every repository's keycloak/ settings are applied in two passes: each repository's own clients,
 # roles, groups and memberships, then grants.yaml files, which name other repositories' service accounts.
 
@@ -55,7 +55,7 @@ x-importer: &importer
 # What a server needs to reach the IdP: the issuer tokens carry, and Keycloak inside Docker.
 x-login: &login
   AUTH_ENABLED: 'true'
-  OIDC_ISSUER_URL: https://shop.test:8443/realms/shop
+  OIDC_ISSUER_URL: https://${IDP_HOST:-idp.test}/realms/shop
   OIDC_INTERNAL_URL: http://keycloak:8080/realms/shop
 
 services:
@@ -65,14 +65,15 @@ services:
     depends_on:
       keycloak-grants:
         condition: service_completed_successfully
-    ports:
-      - '8443:8443'
+    environment:
+      IDP_HOST: ${IDP_HOST:-idp.test}
     volumes:
-      - ./nginx/idp.conf:/etc/nginx/conf.d/idp.conf:ro
+      # The nginx image turns templates/*.template into conf.d/*, filling in IDP_HOST.
+      - ./nginx/idp.conf.template:/etc/nginx/templates/idp.conf.template:ro
     networks:
       edge:
         # Containers on the edge network reach the public origins as a browser does.
-        aliases: [shop.test]
+        aliases: [shop.test, '${IDP_HOST:-idp.test}']
       idp-edge:
 
   # The operator token on /health/units* and /version/units* (MVP-2 phase 4): shop-ops holds the ops role.
@@ -80,7 +81,7 @@ services:
     networks: [edge, units, idp-router]
     environment:
       HEALTH_UNITS_AUTH: 'true'
-      OIDC_ISSUER_URL: https://shop.test:8443/realms/shop
+      OIDC_ISSUER_URL: https://${IDP_HOST:-idp.test}/realms/shop
       OIDC_INTERNAL_URL: http://keycloak:8080/realms/shop
   # Login on for the Shell (MVP-2 phase 2). Each server's client ID and secret stay in its own .env.
   shell-fes:
@@ -142,7 +143,7 @@ services:
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set in docker/.env}
       # The issuer every token carries; servers reach Keycloak inside Docker on keycloak:8080.
-      KC_HOSTNAME: https://shop.test:8443
+      KC_HOSTNAME: https://${IDP_HOST:-idp.test}
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'true'
       KC_HOSTNAME_ADMIN: http://localhost:${KEYCLOAK_DEBUG_PORT:-8081}
       KC_HTTP_ENABLED: 'true'

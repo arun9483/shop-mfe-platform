@@ -1,0 +1,5 @@
+# Supply-chain buffer: a version is installed only once it is a day old (pnpm 11's default).
+minimumReleaseAge: 1440
+# Our own package, published by us: no need to wait a day for it.
+minimumReleaseAgeExclude:
+  - '@arun-dev/server'

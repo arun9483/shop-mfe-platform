@@ -34,6 +34,8 @@ and `DEV_ORIGIN` name the IdP's host, the realm and the Shell's second allowed l
 default tenant's value (`idp.test`, `shop`, `http://localhost:3000`) when unset. `docker/certs.sh <shop-host>
 <idp-host> [dir]` makes the HTTPS certificate for both hosts; `build.sh` runs it, and keeps a certificate that
 already covers them.
+`docker/check-tenant-values.sh` fails when any shop repository names the default tenant's hosts or realm
+outside documentation and defaults (MVP-3 criterion 7).
 
 ## Swap an MFE
 

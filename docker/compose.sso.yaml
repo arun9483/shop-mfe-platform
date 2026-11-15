@@ -26,6 +26,12 @@ x-importer: &importer
     KEYCLOAK_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set in docker/.env}
     KEYCLOAK_AVAILABILITYCHECK_ENABLED: 'true'
     IMPORT_VARSUBSTITUTION_ENABLED: 'true'
+    # The tenant's realm and public origin, for $(env:…) in every repository's keycloak/ files.
+    # DEV_ORIGIN is a second allowed origin for the Shell's login: its development server for the
+    # default tenant; any other tenant sets it to its own PUBLIC_ORIGIN.
+    OIDC_REALM: ${OIDC_REALM:-shop}
+    PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://shop.test}
+    DEV_ORIGIN: ${DEV_ORIGIN:-http://localhost:3000}
     # Several files share one realm: an import must never delete what another file created.
     IMPORT_MANAGED_CLIENT: no-delete
     IMPORT_MANAGED_ROLE: no-delete
@@ -55,8 +61,8 @@ x-importer: &importer
 # What a server needs to reach the IdP: the issuer tokens carry, and Keycloak inside Docker.
 x-login: &login
   AUTH_ENABLED: 'true'
-  OIDC_ISSUER_URL: https://${IDP_HOST:-idp.test}/realms/shop
-  OIDC_INTERNAL_URL: http://keycloak:8080/realms/shop
+  OIDC_ISSUER_URL: https://${IDP_HOST:-idp.test}/realms/${OIDC_REALM:-shop}
+  OIDC_INTERNAL_URL: http://keycloak:8080/realms/${OIDC_REALM:-shop}
 
 services:
   nginx:
@@ -73,7 +79,7 @@ services:
     networks:
       edge:
         # Containers on the edge network reach the public origins as a browser does.
-        aliases: [shop.test, '${IDP_HOST:-idp.test}']
+        aliases: ['${PUBLIC_HOST:-shop.test}', '${IDP_HOST:-idp.test}']
       idp-edge:
 
   # The operator token on /health/units* and /version/units* (MVP-2 phase 4): shop-ops holds the ops role.
@@ -81,8 +87,8 @@ services:
     networks: [edge, units, idp-router]
     environment:
       HEALTH_UNITS_AUTH: 'true'
-      OIDC_ISSUER_URL: https://${IDP_HOST:-idp.test}/realms/shop
-      OIDC_INTERNAL_URL: http://keycloak:8080/realms/shop
+      OIDC_ISSUER_URL: https://${IDP_HOST:-idp.test}/realms/${OIDC_REALM:-shop}
+      OIDC_INTERNAL_URL: http://keycloak:8080/realms/${OIDC_REALM:-shop}
   # Login on for the Shell (MVP-2 phase 2). Each server's client ID and secret stay in its own .env.
   shell-fes:
     networks: [units, shell, idp-shell]

@@ -1,7 +1,7 @@
-# Realm basics for the shop's identity provider, applied first by the settings importer in
+# Realm basics for the tenant's identity provider (realm OIDC_REALM, default shop), applied first by the settings importer in
 # docker/compose.sso.yaml. Each repository adds its own clients and roles in its keycloak/ folder.
 # Secrets come from docker/.env.
-realm: shop
+realm: $(env:OIDC_REALM)
 enabled: true
 sslRequired: external
 # Lightweight access tokens and ID tokens live 5 min; refresh stops when the session ends.

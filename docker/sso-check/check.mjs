@@ -12,11 +12,14 @@ import * as client from 'openid-client';
 import { createRemoteJWKSet, jwtVerify, decodeJwt, decodeProtectedHeader, CompactEncrypt, generateKeyPair, SignJWT } from 'jose';
 import { chromium } from 'playwright';
 
+// The tenant's IdP host, realm and public origin; the defaults are the default tenant's.
 const IDP_ORIGIN = `https://${process.env.IDP_HOST || 'idp.test'}`;
-const PUBLIC_ISSUER = `${IDP_ORIGIN}/realms/shop`;
+const REALM = process.env.OIDC_REALM || 'shop';
+const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN || 'https://shop.test';
+const PUBLIC_ISSUER = `${IDP_ORIGIN}/realms/${REALM}`;
 const INTERNAL = 'http://keycloak:8080';
-const CALLBACK = 'https://shop.test/auth/callback';
-const LOGGED_OUT = 'https://shop.test/auth/logged-out';
+const CALLBACK = `${PUBLIC_ORIGIN}/auth/callback`;
+const LOGGED_OUT = `${PUBLIC_ORIGIN}/auth/logged-out`;
 const UNITS = ['shell', 'catalog', 'cart'];
 const env = (name) => {
   const value = process.env[name];
@@ -50,7 +53,7 @@ function expect(condition, message) {
 // discovery() would refuse the internal URL, because the issuer differs from it, so the metadata is
 // fetched and its issuer checked here.
 async function metadata() {
-  const response = await fetch(`${INTERNAL}/realms/shop/.well-known/openid-configuration`);
+  const response = await fetch(`${INTERNAL}/realms/${REALM}/.well-known/openid-configuration`);
   expect(response.ok, `discovery answered ${response.status}`);
   const document = await response.json();
   expect(document.issuer === PUBLIC_ISSUER, `issuer is ${document.issuer}`);
@@ -134,7 +137,7 @@ async function serviceToken(server, clientId, secret, scope) {
 }
 
 async function admin(token, path) {
-  const response = await fetch(`${INTERNAL}/admin/realms/shop${path}`, {
+  const response = await fetch(`${INTERNAL}/admin/realms/${REALM}${path}`, {
     headers: { authorization: `Bearer ${token}` },
   });
   expect(response.ok, `GET ${path} answered ${response.status}`);
@@ -411,7 +414,7 @@ async function main() {
     const { keycloakAdapter } = await import('@arun-dev/server/auth/keycloak');
     const settings = {
       issuer: PUBLIC_ISSUER,
-      internalUrl: `${INTERNAL}/realms/shop`,
+      internalUrl: `${INTERNAL}/realms/${REALM}`,
       clientId: 'catalog-backend',
       clientSecret: env('CATALOG_BACKEND_SECRET'),
     };
@@ -434,7 +437,7 @@ async function main() {
         role: 'catalog-api:read-products',
       },
     });
-    const unreachable = keycloakAdapter(lazyIdp({ ...settings, internalUrl: 'http://127.0.0.1:9/realms/shop' }, 500), 500);
+    const unreachable = keycloakAdapter(lazyIdp({ ...settings, internalUrl: `http://127.0.0.1:9/realms/${REALM}` }, 500), 500);
     checked.push(await checkUnavailableContract(unreachable, sub, sid));
     return checked.join('; ');
   });
@@ -456,7 +459,7 @@ async function main() {
   await check('18', '/health/units* and /version/units* need the ops role; the router\'s own health is public', async () => {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     const get = (path, token) =>
-      context.request.get(`https://shop.test${path}`, token ? { headers: { authorization: `Bearer ${token}` } } : {}).then((r) => r.status());
+      context.request.get(`${PUBLIC_ORIGIN}${path}`, token ? { headers: { authorization: `Bearer ${token}` } } : {}).then((r) => r.status());
     const ops = await serviceToken(server, 'shop-ops', env('SHOP_OPS_SECRET'));
     const cart = await serviceToken(server, 'cart-backend', env('CART_BACKEND_SECRET'));
     const statuses = {

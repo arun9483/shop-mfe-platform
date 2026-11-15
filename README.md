@@ -28,8 +28,12 @@ makes a self-signed one, which the browser warns about.
 
 ## Change the domain
 
-Change `PUBLIC_ORIGIN` in `docker/.env`, then run `docker/build.sh` again, because source maps are
-tied to that URL. Update `/etc/hosts` to match. Nothing else names the domain.
+Change `PUBLIC_ORIGIN` and `PUBLIC_HOST` in `docker/.env`, then run `docker/build.sh` again, because
+source maps are tied to that URL. Update `/etc/hosts` to match. With login on, `IDP_HOST`, `OIDC_REALM`
+and `DEV_ORIGIN` name the IdP's host, the realm and the Shell's second allowed login origin; each has the
+default tenant's value (`idp.test`, `shop`, `http://localhost:3000`) when unset. `docker/certs.sh <shop-host>
+<idp-host> [dir]` makes the HTTPS certificate for both hosts; `build.sh` runs it, and keeps a certificate that
+already covers them.
 
 ## Swap an MFE
 

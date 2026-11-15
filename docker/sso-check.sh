@@ -15,6 +15,9 @@ set -a
 . ./.env
 set +a
 compose=(docker compose -f compose.yaml -f compose.sso.yaml)
+# The tenant's Compose project (its network names) and realm; the default tenant is shop.
+project="${COMPOSE_PROJECT_NAME:-shop}"
+realm="${OIDC_REALM:-shop}"
 playwright_image=mcr.microsoft.com/playwright:v1.64.1-noble
 
 env_files=(--env-file .env)
@@ -24,8 +27,9 @@ done
 
 run_check() {
   # The public origins (edge), Keycloak (idp-admin) and each unit's own network, to call backends directly.
-  docker run --rm --network shop_edge --network shop_idp-admin --network shop_shell \
-    --network shop_catalog --network shop_cart "${env_files[@]}" \
+  docker run --rm --network "${project}_edge" --network "${project}_idp-admin" --network "${project}_shell" \
+    --network "${project}_catalog" --network "${project}_cart" "${env_files[@]}" \
+    -e OIDC_REALM="$realm" -e PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-https://shop.test}" \
     -v "$PWD/sso-check:/src:ro" "$playwright_image" \
     sh -c 'mkdir -p /work && cp /src/package.json /src/pnpm-lock.yaml /src/pnpm-workspace.yaml /src/check.mjs /work/ &&
       cd /work &&
@@ -108,7 +112,7 @@ expect_reach no catalog-fes http://cart-backend:4003/health/live
 expect_reach no shell-fes http://catalog-backend:4002/health/live
 expect_reach no shop-router http://catalog-backend:4002/health/live
 expect_reach no nginx http://catalog-backend:4002/health/live
-expect_reach yes shop-router http://keycloak:8080/realms/shop
+expect_reach yes shop-router "http://keycloak:8080/realms/$realm"
 if [ "$isolation_failed" = 0 ]; then
   echo "PASS  16  Cart's and Catalog's backends reach each other (catalog-api, two-way); no other unit, the router or nginx reaches a backend"
 else

@@ -404,12 +404,11 @@ async function main() {
     return `${lines.join('; ')}; bob without catalog-backend in aud: ${bobAtCatalog}`;
   });
 
-  // Criterion 13 (phase 5): the Keycloak adapter, from shop-shell's built server-common, passes the
+  // Criterion 13 (phase 5): the Keycloak adapter, from @arun-dev/server (arun-web-foundation), passes the
   // same contract the unit tests check a fake IdP against (ADR 0004).
   await check('19', 'The Keycloak adapter passes the IdP adapter contract, and fails closed when unreachable', async () => {
-    const { checkAdapterContract, checkUnavailableContract } = await import('./shell-common/auth/idp/contract.js');
-    const { keycloakAdapter } = await import('./shell-common/auth/idp/keycloak.js');
-    const { lazyIdp } = await import('./shell-common/auth/metadata.js');
+    const { checkAdapterContract, checkUnavailableContract, lazyIdp } = await import('@arun-dev/server/auth');
+    const { keycloakAdapter } = await import('@arun-dev/server/auth/keycloak');
     const settings = {
       issuer: PUBLIC_ISSUER,
       internalUrl: `${INTERNAL}/realms/shop`,
@@ -420,7 +419,7 @@ async function main() {
     const decoded = (token) => ({ header: decodeProtectedHeader(token), claims: decodeJwt(token) });
     const { sub, sid } = decodeJwt(alice.tokens.access_token);
     const checked = await checkAdapterContract(keycloakAdapter(lazyIdp(settings)), {
-      user: { sub, sid, username: 'alice', unit: 'catalog', roles: ['catalog-editor', 'catalog-viewer'] },
+      user: { sub, sid, username: 'alice', client: 'catalog-backend', roles: ['catalog-editor', 'catalog-viewer'] },
       userWithoutRole: { sub: decodeJwt(bob.tokens.access_token).sub },
       endedSession: { sub: ended.sub, sid: ended.sid },
       unknownSub: '00000000-0000-0000-0000-000000000000',

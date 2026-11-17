@@ -4,26 +4,36 @@
 #
 #   docker/sso-check.sh           every check, about 7 minutes (one waits for an ID token to expire)
 #   docker/sso-check.sh --quick   without that one
+#   TENANT=orga docker/sso-check.sh   against a tenant started with docker/tenant.sh (MVP-3 phase 3)
 #
 # The shop repositories are expected next to this one, or at SHOP_REPOS_DIR.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 repos="${SHOP_REPOS_DIR:-../..}"
+# The default tenant: docker/.env and Compose project shop. A tenant: its settings file and project.
+if [ -n "${TENANT:-}" ]; then
+  env_file="tenants/$TENANT.env"
+  compose=(docker compose -p "tenant-$TENANT" --env-file "$env_file" -f compose.yaml -f compose.sso.yaml -f compose.tenant.yaml)
+  project="tenant-$TENANT"
+else
+  env_file=.env
+  compose=(docker compose -f compose.yaml -f compose.sso.yaml)
+  project="${COMPOSE_PROJECT_NAME:-shop}"
+fi
 set -a
 # shellcheck source=/dev/null
-. ./.env
+. "./$env_file"
 set +a
-compose=(docker compose -f compose.yaml -f compose.sso.yaml)
-# The tenant's Compose project (its network names) and realm; the default tenant is shop.
-project="${COMPOSE_PROJECT_NAME:-shop}"
 realm="${OIDC_REALM:-shop}"
 playwright_image=mcr.microsoft.com/playwright:v1.64.1-noble
 
-env_files=(--env-file .env)
+# The units' secrets, then the tenant's settings, which replace them for a tenant.
+env_files=()
 for repo in shop-shell shop-catalog shop-cart; do
   env_files+=(--env-file "$repos/$repo/keycloak/.env")
 done
+env_files+=(--env-file "$env_file")
 
 run_check() {
   # The public origins (edge), Keycloak (idp-admin) and each unit's own network, to call backends directly.
@@ -87,9 +97,9 @@ echo "Check 16: networks keep each backend private (MVP-1's rule, with the overl
 reach() {
   local container=$1 url=$2
   if [ "$container" = nginx ]; then
-    docker exec "shop-$container-1" wget -q -T 2 -O /dev/null "$url" >/dev/null 2>&1
+    docker exec "$project-$container-1" wget -q -T 2 -O /dev/null "$url" >/dev/null 2>&1
   else
-    docker exec "shop-$container-1" node -e \
+    docker exec "$project-$container-1" node -e \
       "fetch(process.argv[1], { signal: AbortSignal.timeout(2000) }).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(2))" \
       "$url" >/dev/null 2>&1
   fi

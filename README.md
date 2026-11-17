@@ -172,3 +172,37 @@ contract against Keycloak with the published `@arun-dev/server` (from arun-web-f
 with Playwright inside Docker, as the Shell's login client, then checks tokens, the admin API, refresh,
 logout, two tabs, re-running the settings, and that the admin console is not public. It takes about 7
 minutes, because one check waits for an ID token to expire; `--quick` skips that one.
+
+## Several tenants (MVP-3)
+
+Each tenant is one complete, independent deployment: its own nginx, router, Shell, MFEs, backends, Keycloak
+and data, on its own hosts, from the same images. Two tenants, `orga` and `orgb`, run side by side:
+
+| | `orga` | `orgb` |
+|---|---|---|
+| Shop | `https://orga.shop.test` | `https://orgb.shop.test` |
+| IdP | `https://orga-idp.test`, realm `orga` | `https://orgb-idp.test`, realm `orgb` |
+| Compose project | `tenant-orga` | `tenant-orgb` |
+| nginx on | `127.0.0.1:8443` | `127.0.0.1:9443` |
+
+```sh
+cp docker/tenants/orga.env.example docker/tenants/orga.env   # and orgb; set every secret
+docker compose -f docker/compose.yaml -f docker/compose.sso.yaml down   # the default stack frees 80, 443
+docker/build.sh                        # images, once for every tenant
+docker/tenant.sh up orga               # its certificate, then its stack
+docker/tenant.sh up orgb
+docker/tenant.sh front-door up         # ports 80 and 443, routed by host name
+docker/tenant.sh deploy orga           # its source maps, against its origin and New Relic app
+docker/tenant.sh check orga --quick    # sso-check.sh against it
+```
+
+`/etc/hosts` needs `127.0.0.1` for `orga.shop.test`, `orga-idp.test`, `orgb.shop.test` and `orgb-idp.test`.
+`docker/compose.tenant.yaml` is the overlay a tenant runs with: nginx only on `127.0.0.1:$TENANT_HTTPS_PORT`,
+and the tenant's secrets and New Relic apps (`<tenant>-<unit>`, its own browser app) in place of the ones in
+each unit's `.env`. The front door (`compose.front-door.yaml`, `nginx/front-door.conf`) routes each host name
+to its tenant's nginx without decrypting (TLS passthrough): it holds no certificate and stands in for each
+tenant's own DNS and load balancer; `tenant.sh front-door up` writes its routing table from every
+`tenants/*.env`. Adding a tenant: a settings file (and its hosts in `/etc/hosts`).
+
+Docker Desktop's default address pools fit about 31 networks and a stack uses 13, so the default stack is
+taken down (`down`, which keeps its Keycloak data), not only stopped, while two tenants run.

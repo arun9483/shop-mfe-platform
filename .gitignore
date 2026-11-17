@@ -1,3 +1,4 @@
 .env
 docker/certs/
 .DS_Store
+docker/tenants/*.env

@@ -1,0 +1,22 @@
+# The local front door for several tenants (MVP-3 phase 3); not used by the default stack, which publishes
+# its own nginx. See nginx/front-door.conf.
+#
+#   docker/tenant.sh front-door up|down
+name: front-door
+
+services:
+  front-door:
+    image: nginx:1.30.6-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/front-door.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      test: ['CMD-SHELL', 'nginx -t -q']
+      interval: 10s
+      timeout: 3s
+      retries: 3

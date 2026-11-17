@@ -1,0 +1,69 @@
+# One tenant of several on one machine (MVP-3 phase 3), on top of compose.yaml and compose.sso.yaml:
+#
+#   docker/tenant.sh up orga     docker compose -p tenant-orga --env-file tenants/orga.env -f … -f compose.tenant.yaml
+#
+# Everything that differs between tenants comes from the tenant's settings file (tenants/<id>.env):
+# its hosts, realm, certificate, secrets and New Relic apps. Its nginx is published only on 127.0.0.1, on
+# its own port: the front door (compose.front-door.yaml) routes each host name to it.
+
+# Each unit's .env holds the default tenant's secrets and app names; these replace them.
+x-new-relic: &new-relic
+  NEW_RELIC_LICENSE_KEY: ${NEW_RELIC_LICENSE_KEY:?set in the tenant's settings file}
+
+services:
+  nginx:
+    ports: !override
+      - '127.0.0.1:${TENANT_HTTPS_PORT:?set in the tenant settings file}:443'
+
+  shop-router:
+    environment:
+      <<: *new-relic
+      NEW_RELIC_APP_NAME: ${TENANT_ID}-shop-router
+  shell-fes:
+    environment:
+      <<: *new-relic
+      NEW_RELIC_APP_NAME: ${TENANT_ID}-shell-fes
+      OIDC_CLIENT_SECRET: ${SHELL_FES_SECRET:?set in the tenant's settings file}
+      AUTH_COOKIE_KEY: ${AUTH_COOKIE_KEY:?set in the tenant's settings file}
+      # The tenant's own browser app (public by design); empty leaves the browser agent off.
+      PUBLIC_NEW_RELIC_ACCOUNT_ID: ${PUBLIC_NEW_RELIC_ACCOUNT_ID:-}
+      PUBLIC_NEW_RELIC_TRUST_KEY: ${PUBLIC_NEW_RELIC_TRUST_KEY:-}
+      PUBLIC_NEW_RELIC_AGENT_ID: ${PUBLIC_NEW_RELIC_AGENT_ID:-}
+      PUBLIC_NEW_RELIC_APPLICATION_ID: ${PUBLIC_NEW_RELIC_APPLICATION_ID:-}
+      PUBLIC_NEW_RELIC_BROWSER_KEY: ${PUBLIC_NEW_RELIC_BROWSER_KEY:-}
+  shell-backend:
+    environment:
+      <<: *new-relic
+      NEW_RELIC_APP_NAME: ${TENANT_ID}-shell-backend
+      OIDC_CLIENT_SECRET: ${SHELL_BACKEND_SECRET:?set in the tenant's settings file}
+  catalog-fes:
+    environment:
+      <<: *new-relic
+      NEW_RELIC_APP_NAME: ${TENANT_ID}-catalog-fes
+  catalog-backend:
+    environment:
+      <<: *new-relic
+      NEW_RELIC_APP_NAME: ${TENANT_ID}-catalog-backend
+      OIDC_CLIENT_SECRET: ${CATALOG_BACKEND_SECRET:?set in the tenant's settings file}
+  cart-fes:
+    environment:
+      <<: *new-relic
+      NEW_RELIC_APP_NAME: ${TENANT_ID}-cart-fes
+  cart-backend:
+    environment:
+      <<: *new-relic
+      NEW_RELIC_APP_NAME: ${TENANT_ID}-cart-backend
+      OIDC_CLIENT_SECRET: ${CART_BACKEND_SECRET:?set in the tenant's settings file}
+
+  # The Keycloak importers read docker/.env and each repository's keycloak/.env; the tenant's own secrets
+  # replace them, so its Keycloak never holds the default tenant's.
+  keycloak-config:
+    environment: &tenant-secrets
+      SHELL_FES_SECRET: ${SHELL_FES_SECRET}
+      SHELL_BACKEND_SECRET: ${SHELL_BACKEND_SECRET}
+      CATALOG_BACKEND_SECRET: ${CATALOG_BACKEND_SECRET}
+      CART_BACKEND_SECRET: ${CART_BACKEND_SECRET}
+      TEST_USER_PASSWORD: ${TEST_USER_PASSWORD:?set in the tenant's settings file}
+      SHOP_OPS_SECRET: ${SHOP_OPS_SECRET:?set in the tenant's settings file}
+  keycloak-grants:
+    environment: *tenant-secrets

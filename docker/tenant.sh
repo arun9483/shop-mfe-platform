@@ -17,9 +17,33 @@ cd "$(dirname "$0")"
 repos="${SHOP_REPOS_DIR:-../..}"
 command="${1:?usage: tenant.sh up|down|deploy|check <id> | front-door up|down}"
 
+# The front door's routing table, from every tenant's settings file: its two hosts to its nginx's port.
+write_front_door() {
+  local file
+  for file in tenants/*.env; do
+    [ -e "$file" ] || continue
+    (
+      set -a
+      # shellcheck source=/dev/null
+      . "./$file"
+      printf 'upstream tenant_%s { server host.docker.internal:%s; }\n' "$TENANT_ID" "$TENANT_HTTPS_PORT" >&3
+      printf '%s tenant_%s;\n%s tenant_%s;\n' "$PUBLIC_HOST" "$TENANT_ID" "$IDP_HOST" "$TENANT_ID" >&4
+    ) 3>>"$tmp.upstreams" 4>>"$tmp.hosts"
+  done
+  awk -v uf="$tmp.upstreams" -v hf="$tmp.hosts" '
+    /# TENANT_UPSTREAMS/ { while ((getline line < uf) > 0) print "    " line; next }
+    /# TENANT_HOSTS/ { while ((getline line < hf) > 0) print "        " line; next }
+    { print }' nginx/front-door.conf >nginx/front-door.generated.conf
+}
+
 if [ "$command" = front-door ]; then
   case "${2:?up or down}" in
-    up) docker compose -f compose.front-door.yaml up -d --wait ;;
+    up)
+      tmp="$(mktemp)"
+      trap 'rm -f "$tmp" "$tmp.upstreams" "$tmp.hosts"' EXIT
+      write_front_door
+      docker compose -f compose.front-door.yaml up -d --wait --force-recreate
+      ;;
     down) docker compose -f compose.front-door.yaml down ;;
     *) echo "front-door: up or down" >&2; exit 1 ;;
   esac

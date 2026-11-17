@@ -12,7 +12,8 @@ services:
       - '80:80'
       - '443:443'
     volumes:
-      - ./nginx/front-door.conf:/etc/nginx/nginx.conf:ro
+      # Written by tenant.sh front-door up from nginx/front-door.conf and tenants/*.env.
+      - ./nginx/front-door.generated.conf:/etc/nginx/nginx.conf:ro
     extra_hosts:
       - host.docker.internal:host-gateway
     healthcheck:
